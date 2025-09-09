@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS items (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL
+);
+
+INSERT INTO items (name) VALUES ('Sample item 1') ON CONFLICT DO NOTHING;
+INSERT INTO items (name) VALUES ('Sample item 2') ON CONFLICT DO NOTHING;

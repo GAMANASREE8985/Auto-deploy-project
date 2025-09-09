@@ -1,0 +1,57 @@
+name: CI
+on:
+  push:
+    branches: [ main ]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Backend - Test
+        working-directory: backend
+        run: |
+          npm ci
+          npm test
+
+      - name: Frontend - Test
+        working-directory: frontend
+        run: |
+          npm ci
+          npm test --watchAll=false
+
+      - name: Build and push images
+        env:
+          DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USER" --password-stdin
+          docker build -t $DOCKERHUB_USER/auto-deploy-backend:${{ github.sha }} ./backend
+          docker build -t $DOCKERHUB_USER/auto-deploy-frontend:${{ github.sha }} ./frontend
+          docker push $DOCKERHUB_USER/auto-deploy-backend:${{ github.sha }}
+          docker push $DOCKERHUB_USER/auto-deploy-frontend:${{ github.sha }}
+
+      - name: Install Trivy
+        run: |
+          sudo apt-get update && sudo apt-get install -y wget
+          TRIVY_VERSION=$(curl -s https://api.github.com/repos/aquasecurity/trivy/releases/latest | grep tag_name | cut -d '"' -f4)
+          wget https://github.com/aquasecurity/trivy/releases/download/${TRIVY_VERSION}/trivy_${TRIVY_VERSION#v}_Linux-64bit.deb
+          sudo dpkg -i trivy_*_linux_amd64.deb || true
+
+      - name: Trivy scan pushed images
+        env:
+          DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
+        run: |
+          trivy image --severity CRITICAL,HIGH ${{ secrets.DOCKERHUB_USER }}/auto-deploy-backend:${{ github.sha }} || true
+          trivy image --severity CRITICAL,HIGH ${{ secrets.DOCKERHUB_USER }}/auto-deploy-frontend:${{ github.sha }} || true
+
+      - name: SonarQube Scan (example)
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          docker run --rm -e SONAR_HOST_URL=http://sonarqube:9000 -e SONAR_LOGIN=$SONAR_TOKEN -v "${{ github.workspace }}:/usr/src" sonarsource/sonar-

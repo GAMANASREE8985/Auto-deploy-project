@@ -1,0 +1,4 @@
+replicaCount: 2
+image:
+  repository: REPLACE_WITH_REGISTRY/auto-deploy-backend
+  tag: latest

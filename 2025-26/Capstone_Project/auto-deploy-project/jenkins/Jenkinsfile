@@ -1,0 +1,57 @@
+pipeline {
+  agent any
+  environment {
+    DOCKER_REG = credentials('docker-registry') // set credentials in Jenkins
+  }
+  stages {
+    stage('Checkout') {
+      steps { checkout scm }
+    }
+    stage('Backend Install & Test') {
+      steps {
+        dir('backend') {
+          sh 'npm ci'
+          sh 'npm test'
+        }
+      }
+    }
+    stage('Frontend Install & Test') {
+      steps {
+        dir('frontend') {
+          sh 'npm ci'
+          sh 'npm test --watchAll=false'
+        }
+      }
+    }
+    stage('Build Docker Images') {
+      steps {
+        sh '''
+        docker build -t $DOCKER_REG/auto-deploy-backend:${GIT_COMMIT} ./backend
+        docker build -t $DOCKER_REG/auto-deploy-frontend:${GIT_COMMIT} ./frontend
+        '''
+      }
+    }
+    stage('Push Images') {
+      steps {
+        sh '''
+        echo "$DOCKER_REG_PSW" | docker login -u "$DOCKER_REG_USR" --password-stdin $DOCKER_REG_URL || true
+        docker push $DOCKER_REG/auto-deploy-backend:${GIT_COMMIT}
+        docker push $DOCKER_REG/auto-deploy-frontend:${GIT_COMMIT}
+        '''
+      }
+    }
+    stage('Deploy to K8s') {
+      steps {
+        sh '''
+        kubectl set image deployment/backend backend=$DOCKER_REG/auto-deploy-backend:${GIT_COMMIT} -n auto-deploy || true
+        kubectl set image deployment/frontend frontend=$DOCKER_REG/auto-deploy-frontend:${GIT_COMMIT} -n auto-deploy || true
+        '''
+      }
+    }
+  }
+  post {
+    failure {
+      echo 'Build failed - notify team'
+    }
+  }
+}
