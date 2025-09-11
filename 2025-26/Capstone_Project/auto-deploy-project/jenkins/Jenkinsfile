@@ -1,12 +1,18 @@
 pipeline {
   agent any
   environment {
-    DOCKER_REG = credentials('docker-registry') // set credentials in Jenkins
+    // Registry prefix used for tagging images.
+    // Example: "docker.io/yourusername" or "ghcr.io/yourorg"
+    // You can either put the literal here or create a 'Secret text' Jenkins credential and read it.
+    DOCKER_REG = credentials('docker-registry') // optional: only if 'docker-registry' is Secret text containing e.g. docker.io/youruser
+    // If you don't use a secret text, change the above line to:
+    // DOCKER_REG = "docker.io/yourusername"
   }
   stages {
     stage('Checkout') {
       steps { checkout scm }
     }
+
     stage('Backend Install & Test') {
       steps {
         dir('backend') {
@@ -15,40 +21,66 @@ pipeline {
         }
       }
     }
+
     stage('Frontend Install & Test') {
       steps {
         dir('frontend') {
           sh 'npm ci'
+          // disable watch mode in CI
           sh 'npm test --watchAll=false'
         }
       }
     }
+
     stage('Build Docker Images') {
       steps {
+        script {
+          // make sure GIT_COMMIT exists (checkout sets it)
+          env.IMAGE_TAG = env.GIT_COMMIT ?: sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+        }
         sh '''
-        docker build -t $DOCKER_REG/auto-deploy-backend:${GIT_COMMIT} ./backend
-        docker build -t $DOCKER_REG/auto-deploy-frontend:${GIT_COMMIT} ./frontend
+          set -eux
+          echo "Building images with tag: ${IMAGE_TAG}"
+          docker build -t ${DOCKER_REG}/auto-deploy-backend:${IMAGE_TAG} ./backend
+          docker build -t ${DOCKER_REG}/auto-deploy-frontend:${IMAGE_TAG} ./frontend
         '''
       }
     }
+
     stage('Push Images') {
       steps {
-        sh '''
-        echo "$DOCKER_REG_PSW" | docker login -u "$DOCKER_REG_USR" --password-stdin $DOCKER_REG_URL || true
-        docker push $DOCKER_REG/auto-deploy-backend:${GIT_COMMIT}
-        docker push $DOCKER_REG/auto-deploy-frontend:${GIT_COMMIT}
-        '''
+        script {
+          // Parse registry host (docker login needs the host part). If DOCKER_REG is like "docker.io/youruser",
+          // this extracts "docker.io". If DOCKER_REG is just "docker.io", it still works.
+          def regHost = sh(script: 'echo "${DOCKER_REG}" | awk -F"/" \'{print $1}\'', returnStdout: true).trim()
+          env.DOCKER_REG_HOST = regHost
+        }
+
+        // Use the username/password credential with id 'docker-cred'
+        withCredentials([usernamePassword(credentialsId: 'docker-cred', usernameVariable: 'DOCKER_REG_USR', passwordVariable: 'DOCKER_REG_PSW')]) {
+          sh '''
+            set -eux
+            # login
+            echo "$DOCKER_REG_PSW" | docker login --username "$DOCKER_REG_USR" --password-stdin ${DOCKER_REG_HOST} || true
+            # push
+            docker push ${DOCKER_REG}/auto-deploy-backend:${IMAGE_TAG}
+            docker push ${DOCKER_REG}/auto-deploy-frontend:${IMAGE_TAG}
+          '''
+        }
       }
     }
+
     stage('Deploy to K8s') {
       steps {
         sh '''
-        kubectl set image deployment/backend backend=$DOCKER_REG/auto-deploy-backend:${GIT_COMMIT} -n auto-deploy || true
-        kubectl set image deployment/frontend frontend=$DOCKER_REG/auto-deploy-frontend:${GIT_COMMIT} -n auto-deploy || true
+          set -eux
+          kubectl set image deployment/backend backend=${DOCKER_REG}/auto-deploy-backend:${IMAGE_TAG} -n auto-deploy || true
+          kubectl set image deployment/frontend frontend=${DOCKER_REG}/auto-deploy-frontend:${IMAGE_TAG} -n auto-deploy || true
         '''
       }
     }
   }
+
   post {
     failure {
       echo 'Build failed - notify team'
