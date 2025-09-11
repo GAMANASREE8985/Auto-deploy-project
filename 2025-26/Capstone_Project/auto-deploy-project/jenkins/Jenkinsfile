@@ -1,17 +1,31 @@
 pipeline {
   agent any
   environment {
-    // Set the registry prefix (where images will be pushed)
-    // For Docker Hub under your user: docker.io/220030228
+    // path inside the repo where your project is located
+    BASEDIR = "2025-26/Capstone_Project/auto-deploy-project"
     DOCKER_REG = "docker.io/220030228"
   }
+
   stages {
-    stage('Checkout') { steps { checkout scm } }
+    stage('Checkout') {
+      steps {
+        checkout scm
+        // diagnostics to confirm workspace layout
+        sh 'echo "=== workspace root ==="; pwd; ls -la || true'
+        sh 'echo "=== tree (shallow) ==="; find . -maxdepth 3 -type d -printf "%p\n" || true'
+        sh "echo 'Using BASEDIR='${BASEDIR}"
+        sh "ls -la ${BASEDIR} || true"
+      }
+    }
 
     stage('Backend Install & Test') {
       steps {
-        dir('backend') {
+        dir("${BASEDIR}/backend") {
           sh '''
+            echo "PWD: $(pwd)"
+            echo "Listing backend folder:"
+            ls -la || true
+
             if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
               echo "Using npm ci"
               npm ci
@@ -19,6 +33,7 @@ pipeline {
               echo "No lockfile, using npm install"
               npm install
             fi
+
             npm test || true
           '''
         }
@@ -27,8 +42,12 @@ pipeline {
 
     stage('Frontend Install & Test') {
       steps {
-        dir('frontend') {
+        dir("${BASEDIR}/frontend") {
           sh '''
+            echo "PWD: $(pwd)"
+            echo "Listing frontend folder:"
+            ls -la || true
+
             if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
               echo "Using npm ci"
               npm ci
@@ -36,6 +55,7 @@ pipeline {
               echo "No lockfile, using npm install"
               npm install
             fi
+
             npm test --watchAll=false || true
           '''
         }
@@ -45,13 +65,12 @@ pipeline {
     stage('Build Docker Images') {
       steps {
         script {
-          // choose a tag for images (GIT_COMMIT if present, else short commit)
           env.IMAGE_TAG = env.GIT_COMMIT ?: sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
         }
         sh '''
           set -eux
-          docker build -t ${DOCKER_REG}/auto-deploy-backend:${IMAGE_TAG} ./backend
-          docker build -t ${DOCKER_REG}/auto-deploy-frontend:${IMAGE_TAG} ./frontend
+          docker build -t ${DOCKER_REG}/auto-deploy-backend:${IMAGE_TAG} ${BASEDIR}/backend
+          docker build -t ${DOCKER_REG}/auto-deploy-frontend:${IMAGE_TAG} ${BASEDIR}/frontend
         '''
       }
     }
@@ -59,10 +78,8 @@ pipeline {
     stage('Push Images') {
       steps {
         script {
-          // get registry host, e.g., "docker.io"
           env.DOCKER_REG_HOST = sh(script: 'echo "${DOCKER_REG}" | awk -F"/" \'{print $1}\'', returnStdout: true).trim()
         }
-        // Use the username/password credential you created (ID = docker-cred)
         withCredentials([usernamePassword(credentialsId: 'docker-cred', usernameVariable: 'DOCKER_REG_USR', passwordVariable: 'DOCKER_REG_PSW')]) {
           sh '''
             set -eux
