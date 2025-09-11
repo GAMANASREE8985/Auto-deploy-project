@@ -3,7 +3,7 @@ pipeline {
   environment {
     // path inside the repo where your project is located
     BASEDIR = "2025-26/Capstone_Project/auto-deploy-project"
-    DOCKER_REG = "docker.io/220030228"
+    DOCKER_REG = "docker.io/2200030228"
   }
 
   stages {
