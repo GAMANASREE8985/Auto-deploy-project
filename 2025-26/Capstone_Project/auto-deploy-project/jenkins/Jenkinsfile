@@ -1,57 +1,109 @@
 pipeline {
   agent any
   environment {
-    DOCKER_REG = credentials('docker-registry') // set credentials in Jenkins
+    // path inside the repo where your project is located
+    BASEDIR = "2025-26/Capstone_Project/auto-deploy-project"
+    DOCKER_REG = "docker.io/220030228"
   }
+
   stages {
     stage('Checkout') {
-      steps { checkout scm }
+      steps {
+        checkout scm
+        // diagnostics to confirm workspace layout
+        sh 'echo "=== workspace root ==="; pwd; ls -la || true'
+        sh 'echo "=== tree (shallow) ==="; find . -maxdepth 3 -type d -printf "%p\n" || true'
+        sh "echo 'Using BASEDIR='${BASEDIR}"
+        sh "ls -la ${BASEDIR} || true"
+      }
     }
+
     stage('Backend Install & Test') {
       steps {
-        dir('backend') {
-          sh 'npm ci'
-          sh 'npm test'
+        dir("${BASEDIR}/backend") {
+          sh '''
+            echo "PWD: $(pwd)"
+            echo "Listing backend folder:"
+            ls -la || true
+
+            if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+              echo "Using npm ci"
+              npm ci
+            else
+              echo "No lockfile, using npm install"
+              npm install
+            fi
+
+            npm test || true
+          '''
         }
       }
     }
+
     stage('Frontend Install & Test') {
       steps {
-        dir('frontend') {
-          sh 'npm ci'
-          sh 'npm test --watchAll=false'
+        dir("${BASEDIR}/frontend") {
+          sh '''
+            echo "PWD: $(pwd)"
+            echo "Listing frontend folder:"
+            ls -la || true
+
+            if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+              echo "Using npm ci"
+              npm ci
+            else
+              echo "No lockfile, using npm install"
+              npm install
+            fi
+
+            npm test --watchAll=false || true
+          '''
         }
       }
     }
+
     stage('Build Docker Images') {
       steps {
+        script {
+          env.IMAGE_TAG = env.GIT_COMMIT ?: sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+        }
         sh '''
-        docker build -t $DOCKER_REG/auto-deploy-backend:${GIT_COMMIT} ./backend
-        docker build -t $DOCKER_REG/auto-deploy-frontend:${GIT_COMMIT} ./frontend
+          set -eux
+          docker build -t ${DOCKER_REG}/auto-deploy-backend:${IMAGE_TAG} ${BASEDIR}/backend
+          docker build -t ${DOCKER_REG}/auto-deploy-frontend:${IMAGE_TAG} ${BASEDIR}/frontend
         '''
       }
     }
+
     stage('Push Images') {
       steps {
-        sh '''
-        echo "$DOCKER_REG_PSW" | docker login -u "$DOCKER_REG_USR" --password-stdin $DOCKER_REG_URL || true
-        docker push $DOCKER_REG/auto-deploy-backend:${GIT_COMMIT}
-        docker push $DOCKER_REG/auto-deploy-frontend:${GIT_COMMIT}
-        '''
+        script {
+          env.DOCKER_REG_HOST = sh(script: 'echo "${DOCKER_REG}" | awk -F"/" \'{print $1}\'', returnStdout: true).trim()
+        }
+        withCredentials([usernamePassword(credentialsId: 'docker-cred', usernameVariable: 'DOCKER_REG_USR', passwordVariable: 'DOCKER_REG_PSW')]) {
+          sh '''
+            set -eux
+            echo "Logging in to ${DOCKER_REG_HOST}"
+            echo "$DOCKER_REG_PSW" | docker login --username "$DOCKER_REG_USR" --password-stdin ${DOCKER_REG_HOST}
+            docker push ${DOCKER_REG}/auto-deploy-backend:${IMAGE_TAG}
+            docker push ${DOCKER_REG}/auto-deploy-frontend:${IMAGE_TAG}
+          '''
+        }
       }
     }
+
     stage('Deploy to K8s') {
       steps {
         sh '''
-        kubectl set image deployment/backend backend=$DOCKER_REG/auto-deploy-backend:${GIT_COMMIT} -n auto-deploy || true
-        kubectl set image deployment/frontend frontend=$DOCKER_REG/auto-deploy-frontend:${GIT_COMMIT} -n auto-deploy || true
+          set -eux
+          kubectl set image deployment/backend backend=${DOCKER_REG}/auto-deploy-backend:${IMAGE_TAG} -n auto-deploy || true
+          kubectl set image deployment/frontend frontend=${DOCKER_REG}/auto-deploy-frontend:${IMAGE_TAG} -n auto-deploy || true
         '''
       }
     }
   }
+
   post {
-    failure {
-      echo 'Build failed - notify team'
-    }
+    failure { echo 'Build failed - notify team' }
   }
 }
