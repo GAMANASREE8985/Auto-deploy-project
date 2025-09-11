@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   name: backend
   namespace: auto-deploy
+  labels:
+    app: backend
 spec:
   replicas: 2
   selector:
@@ -12,31 +14,67 @@ spec:
     metadata:
       labels:
         app: backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "4000"
     spec:
-      template:
-        metadata:
-          annotations:
-            prometheus.io/scrape: 'true'
-            prometheus.io/port: '4000'
-        labels:
-          app: backend
       containers:
-      - name: backend
-        image: REPLACE_WITH_REGISTRY/auto-deploy-backend:latest
-        ports:
-        - containerPort: 4000
-        env:
-        - name: DATABASE_URL
-          value: "postgresql://postgres:postgres@postgres:5432/postgres"
+        - name: backend
+          image: docker.io/2200030228/auto-deploy-backend:781a5a0aa3934b7231043a112f33d90f098bcc99
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 4000
+          env:
+            - name: DATABASE_HOST
+              value: postgres
+            - name: DATABASE_PORT
+              value: "5432"
+            - name: DATABASE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_USER
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+            - name: DATABASE_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_DB
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: backend
   namespace: auto-deploy
+  labels:
+    app: backend
 spec:
+  type: ClusterIP
+  ports:
+    - port: 4000
+      targetPort: 4000
   selector:
     app: backend
-  ports:
-  - port: 4000
-    targetPort: 4000
