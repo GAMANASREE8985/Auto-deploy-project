@@ -7,6 +7,7 @@ on:
 
 env:
   NODE_VERSION: 18
+  BASE_DIR: 2025-26/Capstone_Project/auto-deploy-project
 
 jobs:
   build:
@@ -20,6 +21,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Show repo layout (debug)
+        run: |
+          pwd
+          ls -la
+          ls -la ${{ env.BASE_DIR }}
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -28,13 +35,13 @@ jobs:
       - name: Cache backend node modules
         uses: actions/cache@v4
         with:
-          path: backend/node_modules
-          key: ${{ runner.os }}-backend-node-${{ hashFiles('backend/package-lock.json') }}
+          path: ${{ env.BASE_DIR }}/backend/node_modules
+          key: ${{ runner.os }}-backend-node-${{ hashFiles(format('{0}/backend/package-lock.json', env.BASE_DIR)) }}
           restore-keys: |
             ${{ runner.os }}-backend-node-
 
       - name: Backend - Install & Test
-        working-directory: ./backend
+        working-directory: ${{ env.BASE_DIR }}/backend
         run: |
           npm ci
           npm test
@@ -42,13 +49,13 @@ jobs:
       - name: Cache frontend node modules
         uses: actions/cache@v4
         with:
-          path: frontend/node_modules
-          key: ${{ runner.os }}-frontend-node-${{ hashFiles('frontend/package-lock.json') }}
+          path: ${{ env.BASE_DIR }}/frontend/node_modules
+          key: ${{ runner.os }}-frontend-node-${{ hashFiles(format('{0}/frontend/package-lock.json', env.BASE_DIR)) }}
           restore-keys: |
             ${{ runner.os }}-frontend-node-
 
       - name: Frontend - Install & Test
-        working-directory: ./frontend
+        working-directory: ${{ env.BASE_DIR }}/frontend
         run: |
           npm ci
           npm test --watchAll=false
@@ -65,16 +72,16 @@ jobs:
       - name: Build and push backend image
         uses: docker/build-push-action@v4
         with:
-          context: ./backend
-          file: ./backend/Dockerfile
+          context: ${{ env.BASE_DIR }}/backend
+          file: ${{ env.BASE_DIR }}/backend/Dockerfile
           push: true
           tags: ${{ env.DOCKERHUB_USER }}/auto-deploy-backend:${{ github.sha }}
 
       - name: Build and push frontend image
         uses: docker/build-push-action@v4
         with:
-          context: ./frontend
-          file: ./frontend/Dockerfile
+          context: ${{ env.BASE_DIR }}/frontend
+          file: ${{ env.BASE_DIR }}/frontend/Dockerfile
           push: true
           tags: ${{ env.DOCKERHUB_USER }}/auto-deploy-frontend:${{ github.sha }}
 
