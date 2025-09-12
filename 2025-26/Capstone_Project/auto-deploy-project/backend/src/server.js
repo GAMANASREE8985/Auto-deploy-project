@@ -20,7 +20,6 @@ app.get('/items', async (req, res) => {
     res.status(500).json({ error: 'db error' });
   }
 });
-
 app.post('/items', async (req, res) => {
   const { name } = req.body;
   try {
