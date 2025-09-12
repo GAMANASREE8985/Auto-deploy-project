@@ -1,7 +1,9 @@
 name: CI
+
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
 
 env:
   NODE_VERSION: 18
@@ -9,6 +11,10 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
     steps:
       - name: Checkout repository
@@ -28,7 +34,7 @@ jobs:
             ${{ runner.os }}-backend-node-
 
       - name: Backend - Install & Test
-        working-directory: backend
+        working-directory: ./backend
         run: |
           npm ci
           npm test
@@ -42,7 +48,7 @@ jobs:
             ${{ runner.os }}-frontend-node-
 
       - name: Frontend - Install & Test
-        working-directory: frontend
+        working-directory: ./frontend
         run: |
           npm ci
           npm test --watchAll=false
@@ -53,8 +59,8 @@ jobs:
       - name: Log in to DockerHub
         uses: docker/login-action@v2
         with:
-          username: ${{ secrets.DOCKERHUB_USER }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ env.DOCKERHUB_USER }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
 
       - name: Build and push backend image
         uses: docker/build-push-action@v4
@@ -62,7 +68,7 @@ jobs:
           context: ./backend
           file: ./backend/Dockerfile
           push: true
-          tags: ${{ secrets.DOCKERHUB_USER }}/auto-deploy-backend:${{ github.sha }}
+          tags: ${{ env.DOCKERHUB_USER }}/auto-deploy-backend:${{ github.sha }}
 
       - name: Build and push frontend image
         uses: docker/build-push-action@v4
@@ -70,7 +76,7 @@ jobs:
           context: ./frontend
           file: ./frontend/Dockerfile
           push: true
-          tags: ${{ secrets.DOCKERHUB_USER }}/auto-deploy-frontend:${{ github.sha }}
+          tags: ${{ env.DOCKERHUB_USER }}/auto-deploy-frontend:${{ github.sha }}
 
       - name: Install Trivy
         run: |
@@ -78,16 +84,13 @@ jobs:
 
       - name: Trivy scan pushed backend image (CRITICAL,HIGH)
         run: |
-          trivy image --severity CRITICAL,HIGH ${{ secrets.DOCKERHUB_USER }}/auto-deploy-backend:${{ github.sha }} || true
+          trivy image --severity CRITICAL,HIGH ${{ env.DOCKERHUB_USER }}/auto-deploy-backend:${{ github.sha }} || true
 
       - name: Trivy scan pushed frontend image (CRITICAL,HIGH)
         run: |
-          trivy image --severity CRITICAL,HIGH ${{ secrets.DOCKERHUB_USER }}/auto-deploy-frontend:${{ github.sha }} || true
+          trivy image --severity CRITICAL,HIGH ${{ env.DOCKERHUB_USER }}/auto-deploy-frontend:${{ github.sha }} || true
 
-      - name: SonarQube Scan (placeholder)
-        if: ${{ secrets.SONAR_TOKEN != '' }}
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      - name: SonarQube scan (placeholder)
+        if: ${{ env.SONAR_TOKEN != '' }}
         run: |
-          echo "Run sonar scanner here - adapt to your Sonar setup"
-          # Example: docker run --rm -e SONAR_HOST_URL=... -e SONAR_LOGIN=$SONAR_TOKEN -v "${{ github.workspace }}:/usr/src" sonarsource/sonar-scanner-cli
+          echo "Customize Sonar scanner here"
