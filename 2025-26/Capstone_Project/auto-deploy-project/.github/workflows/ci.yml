@@ -14,13 +14,13 @@ jobs:
           node-version: 18
 
       - name: Backend - Test
-        working-directory: backend
+        working-directory: /2025-26/Capstone_Project/auto-deploy-project/backend
         run: |
           npm ci
           npm test
 
       - name: Frontend - Test
-        working-directory: frontend
+        working-directory: /2025-26/Capstone_Project/auto-deploy-project/frontend
         run: |
           npm ci
           npm test --watchAll=false
