@@ -5,7 +5,6 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
-# top-level plain literals (no expressions here)
 env:
   NODE_VERSION: 18
   BASE_DIR: 2025-26/Capstone_Project/auto-deploy-project
@@ -13,14 +12,10 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-
-    # job-level environment: allowed to use expressions for secrets/fallbacks
     env:
-      IMAGE_USER: ${{ secrets.DOCKERHUB_USER || github.actor }}
+      DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      NODE_VERSION_JOB: ${{ env.NODE_VERSION }}
-      BASE_DIR_JOB: ${{ env.BASE_DIR }}
 
     steps:
       - name: Checkout repository
@@ -30,8 +25,7 @@ jobs:
         run: |
           pwd
           ls -la
-          echo "BASE_DIR=${BASE_DIR_JOB}"
-          ls -la "${BASE_DIR_JOB}"
+          ls -la ${{ env.BASE_DIR }}
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -66,31 +60,13 @@ jobs:
           npm ci
           npm test --watchAll=false
 
-      - name: Ensure DockerHub token present
-        run: |
-          if [ -z "$DOCKERHUB_TOKEN" ]; then
-            echo "ERROR: DOCKERHUB_TOKEN secret is not set. Add repository secret DOCKERHUB_TOKEN and try again."
-            exit 1
-          fi
-        # use job env values
-        env:
-          DOCKERHUB_TOKEN: ${{ env.DOCKERHUB_TOKEN }}
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
-
-      - name: Debug - show resolved image tags
-        run: |
-          echo "Backend tag: ${IMAGE_USER}/auto-deploy-backend:${GITHUB_SHA}"
-          echo "Frontend tag: ${IMAGE_USER}/auto-deploy-frontend:${GITHUB_SHA}"
-        env:
-          IMAGE_USER: ${{ env.IMAGE_USER }}
-          GITHUB_SHA: ${{ github.sha }}
 
       - name: Log in to DockerHub
         uses: docker/login-action@v2
         with:
-          username: ${{ env.IMAGE_USER }}
+          username: ${{ env.DOCKERHUB_USER }}
           password: ${{ env.DOCKERHUB_TOKEN }}
 
       - name: Build and push backend image
@@ -99,9 +75,7 @@ jobs:
           context: ${{ env.BASE_DIR }}/backend
           file: ${{ env.BASE_DIR }}/backend/Dockerfile
           push: true
-          tags: |
-            ${{ env.IMAGE_USER }}/auto-deploy-backend:latest
-            ${{ env.IMAGE_USER }}/auto-deploy-backend:${{ github.sha }}
+          tags: ${{ env.DOCKERHUB_USER }}/auto-deploy-backend:${{ github.sha }}
 
       - name: Build and push frontend image
         uses: docker/build-push-action@v4
@@ -109,9 +83,7 @@ jobs:
           context: ${{ env.BASE_DIR }}/frontend
           file: ${{ env.BASE_DIR }}/frontend/Dockerfile
           push: true
-          tags: |
-            ${{ env.IMAGE_USER }}/auto-deploy-frontend:latest
-            ${{ env.IMAGE_USER }}/auto-deploy-frontend:${{ github.sha }}
+          tags: ${{ env.DOCKERHUB_USER }}/auto-deploy-frontend:${{ github.sha }}
 
       - name: Install Trivy
         run: |
@@ -119,13 +91,13 @@ jobs:
 
       - name: Trivy scan pushed backend image (CRITICAL,HIGH)
         run: |
-          trivy image --severity CRITICAL,HIGH ${{ env.IMAGE_USER }}/auto-deploy-backend:${{ github.sha }} || true
+          trivy image --severity CRITICAL,HIGH ${{ env.DOCKERHUB_USER }}/auto-deploy-backend:${{ github.sha }} || true
 
       - name: Trivy scan pushed frontend image (CRITICAL,HIGH)
         run: |
-          trivy image --severity CRITICAL,HIGH ${{ env.IMAGE_USER }}/auto-deploy-frontend:${{ github.sha }} || true
+          trivy image --severity CRITICAL,HIGH ${{ env.DOCKERHUB_USER }}/auto-deploy-frontend:${{ github.sha }} || true
 
       - name: SonarQube scan (placeholder)
-        if: ${{ secrets.SONAR_TOKEN }}          # truthy check (works reliably)
+        if: ${{ env.SONAR_TOKEN != '' }}
         run: |
           echo "Customize Sonar scanner here"
