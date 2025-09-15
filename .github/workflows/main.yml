@@ -5,6 +5,7 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+# top-level plain literals (no expressions here)
 env:
   NODE_VERSION: 18
   BASE_DIR: 2025-26/Capstone_Project/auto-deploy-project
@@ -13,13 +14,13 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    # Resolve image user with fallback to github.actor if secret not provided
+    # job-level environment: allowed to use expressions for secrets/fallbacks
     env:
       IMAGE_USER: ${{ secrets.DOCKERHUB_USER || github.actor }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      NODE_VERSION: ${{ env.NODE_VERSION }}
-      BASE_DIR: ${{ env.BASE_DIR }}
+      NODE_VERSION_JOB: ${{ env.NODE_VERSION }}
+      BASE_DIR_JOB: ${{ env.BASE_DIR }}
 
     steps:
       - name: Checkout repository
@@ -29,8 +30,8 @@ jobs:
         run: |
           pwd
           ls -la
-          echo "BASE_DIR=${BASE_DIR}"
-          ls -la "${BASE_DIR}"
+          echo "BASE_DIR=${BASE_DIR_JOB}"
+          ls -la "${BASE_DIR_JOB}"
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -71,6 +72,9 @@ jobs:
             echo "ERROR: DOCKERHUB_TOKEN secret is not set. Add repository secret DOCKERHUB_TOKEN and try again."
             exit 1
           fi
+        # use job env values
+        env:
+          DOCKERHUB_TOKEN: ${{ env.DOCKERHUB_TOKEN }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
@@ -122,6 +126,6 @@ jobs:
           trivy image --severity CRITICAL,HIGH ${{ env.IMAGE_USER }}/auto-deploy-frontend:${{ github.sha }} || true
 
       - name: SonarQube scan (placeholder)
-        if: ${{ secrets.SONAR_TOKEN != '' }}
+        if: ${{ secrets.SONAR_TOKEN }}          # truthy check (works reliably)
         run: |
           echo "Customize Sonar scanner here"
