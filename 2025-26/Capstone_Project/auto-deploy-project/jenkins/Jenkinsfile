@@ -5,7 +5,6 @@ pipeline {
     BASEDIR = "2025-26/Capstone_Project/auto-deploy-project"
     DOCKER_REG = "docker.io/2200030228"
   }
-
   stages {
     stage('Checkout') {
       steps {
