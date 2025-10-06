@@ -1,4 +1,4 @@
-name: CI / Build / Docker Push / Scan
+name: CI 
 
 # Triggers - push to main and manual
 on:
