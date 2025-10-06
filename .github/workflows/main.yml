@@ -1,4 +1,4 @@
-name: CI / Build / Docker Push / Scan
+name: CI 
 
 on:
   push:
