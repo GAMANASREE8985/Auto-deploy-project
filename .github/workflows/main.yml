@@ -1,4 +1,4 @@
-name: CI 
+name: CI
 
 on:
   push:
@@ -76,19 +76,32 @@ jobs:
           npm ci
           npm test --watchAll=false || true
 
+      - name: Build frontend production bundle (if exists)
+        working-directory: ${{ env.BASE_DIR }}/frontend
+        run: |
+          if grep -q "\"build\"" package.json 2>/dev/null; then
+            npm run build
+          else
+            echo "No build script found for frontend."
+          fi
+
   docker_and_scan:
     name: Build & Push Docker Images + Scan
     needs: build
     runs-on: ubuntu-latest
     env:
       BASE_DIR: ${{ env.BASE_DIR }}
-      DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
-      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up QEMU (optional)
+      - name: Debug DOCKERHUB_USER (safe marker)
+        run: |
+          # Print markers to detect accidental spaces or leading slash.
+          # This prints visible markers but not secrets themselves.
+          echo "START_MARKER->${{ secrets.DOCKERHUB_USER }}<-END_MARKER"
+
+      - name: Set up QEMU (optional multi-arch)
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
@@ -100,25 +113,43 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Ensure backend Dockerfile exists (fail early)
+        run: |
+          echo "Checking backend Dockerfile: ${{ env.BASE_DIR }}/backend/Dockerfile"
+          if [ ! -f "${{ env.BASE_DIR }}/backend/Dockerfile" ]; then
+            echo "::error ::Backend Dockerfile missing at ${{ env.BASE_DIR }}/backend/Dockerfile"
+            ls -la "${{ env.BASE_DIR }}/backend" || true
+            exit 1
+          fi
+
       - name: Build and push backend image
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v5
         with:
           context: ${{ env.BASE_DIR }}/backend
           file: ${{ env.BASE_DIR }}/backend/Dockerfile
           push: true
           tags: |
-            ${{ secrets.DOCKERHUB_USER }}/auto-deploy-backend:${{ github.sha }}
-            ${{ secrets.DOCKERHUB_USER }}/auto-deploy-backend:latest
+            ${{ replace(secrets.DOCKERHUB_USER, '/', '') }}/auto-deploy-backend:${{ github.sha }}
+            ${{ replace(secrets.DOCKERHUB_USER, '/', '') }}/auto-deploy-backend:latest
+
+      - name: Ensure frontend Dockerfile exists (fail early)
+        run: |
+          echo "Checking frontend Dockerfile: ${{ env.BASE_DIR }}/frontend/Dockerfile"
+          if [ ! -f "${{ env.BASE_DIR }}/frontend/Dockerfile" ]; then
+            echo "::error ::Frontend Dockerfile missing at ${{ env.BASE_DIR }}/frontend/Dockerfile"
+            ls -la "${{ env.BASE_DIR }}/frontend" || true
+            exit 1
+          fi
 
       - name: Build and push frontend image
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v5
         with:
           context: ${{ env.BASE_DIR }}/frontend
           file: ${{ env.BASE_DIR }}/frontend/Dockerfile
           push: true
           tags: |
-            ${{ secrets.DOCKERHUB_USER }}/auto-deploy-frontend:${{ github.sha }}
-            ${{ secrets.DOCKERHUB_USER }}/auto-deploy-frontend:latest
+            ${{ replace(secrets.DOCKERHUB_USER, '/', '') }}/auto-deploy-frontend:${{ github.sha }}
+            ${{ replace(secrets.DOCKERHUB_USER, '/', '') }}/auto-deploy-frontend:latest
 
       - name: Install Trivy
         run: |
@@ -126,11 +157,11 @@ jobs:
 
       - name: Trivy scan backend (CRITICAL,HIGH)
         run: |
-          trivy image --severity CRITICAL,HIGH ${{ secrets.DOCKERHUB_USER }}/auto-deploy-backend:${{ github.sha }} || true
+          trivy image --severity CRITICAL,HIGH ${{ replace(secrets.DOCKERHUB_USER, '/', '') }}/auto-deploy-backend:${{ github.sha }} || true
 
       - name: Trivy scan frontend (CRITICAL,HIGH)
         run: |
-          trivy image --severity CRITICAL,HIGH ${{ secrets.DOCKERHUB_USER }}/auto-deploy-frontend:${{ github.sha }} || true
+          trivy image --severity CRITICAL,HIGH ${{ replace(secrets.DOCKERHUB_USER, '/', '') }}/auto-deploy-frontend:${{ github.sha }} || true
 
   sonar_scan:
     name: SonarQube (optional)
@@ -141,4 +172,5 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: SonarQube placeholder
-        run: echo "Add Sonar scanner steps here if required"
+        run: |
+          echo "Add Sonar scanner steps here (sonar-scanner CLI or action)."
