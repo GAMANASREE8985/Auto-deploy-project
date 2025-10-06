@@ -1,15 +1,16 @@
 pipeline {
-  agent none
+  agent any
   environment {
+    // path inside the repo where your project is located
     BASEDIR = "2025-26/Capstone_Project/auto-deploy-project"
     DOCKER_REG = "docker.io/2200030228"
   }
 
   stages {
     stage('Checkout') {
-      agent any
       steps {
         checkout scm
+        // diagnostics to confirm workspace layout
         sh 'echo "=== workspace root ==="; pwd; ls -la || true'
         sh 'echo "=== tree (shallow) ==="; find . -maxdepth 3 -type d -printf "%p\n" || true'
         sh "echo 'Using BASEDIR='${BASEDIR}"
@@ -18,11 +19,11 @@ pipeline {
     }
 
     stage('Backend Install & Test') {
-      agent any
       steps {
         dir("${BASEDIR}/backend") {
           sh '''
             echo "PWD: $(pwd)"
+            echo "Listing backend folder:"
             ls -la || true
 
             if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
@@ -40,17 +41,18 @@ pipeline {
     }
 
     stage('Frontend Install & Test') {
-      agent any
       steps {
         dir("${BASEDIR}/frontend") {
           sh '''
             echo "PWD: $(pwd)"
+            echo "Listing frontend folder:"
             ls -la || true
 
             if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
               echo "Using npm ci"
               npm ci
             else
+              echo "No lockfile, using npm install"
               npm install
             fi
 
@@ -60,60 +62,29 @@ pipeline {
       }
     }
 
-    // NOTE: Build and Push must run on same node that has Docker daemon accessible
     stage('Build Docker Images') {
-      agent { label 'docker-capable-node' } // <-- update this label to your Docker agent
       steps {
         script {
-          // create a safe IMAGE_TAG
-          def shortSha = env.GIT_COMMIT ?: sh(script: "git rev-parse --short HEAD || true", returnStdout: true).trim()
-          if (!shortSha) {
-            shortSha = sh(script: "date +%s", returnStdout: true).trim()
-          }
-          env.IMAGE_TAG = shortSha
-          echo "Using IMAGE_TAG=${env.IMAGE_TAG}"
+          env.IMAGE_TAG = env.GIT_COMMIT ?: sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
         }
         sh '''
           set -eux
           docker build -t ${DOCKER_REG}/auto-deploy-backend:${IMAGE_TAG} ${BASEDIR}/backend
           docker build -t ${DOCKER_REG}/auto-deploy-frontend:${IMAGE_TAG} ${BASEDIR}/frontend
-
-          echo "Images after build:"
-          docker images | grep auto-deploy || true
-
-          # verify backend tag exists; if not, try to find a recent image and retag
-          if ! docker inspect ${DOCKER_REG}/auto-deploy-backend:${IMAGE_TAG} >/dev/null 2>&1; then
-            echo "Expected backend tag not present. Attempting to find and retag a recently built backend image..."
-            IMAGE_ID=$(docker images --format '{{.Repository}} {{.ID}} {{.CreatedAt}}' | grep auto-deploy-backend | head -n1 | awk '{print $2}' || true)
-            if [ -n "${IMAGE_ID}" ]; then
-              echo "Found image id ${IMAGE_ID}. Retagging..."
-              docker tag ${IMAGE_ID} ${DOCKER_REG}/auto-deploy-backend:${IMAGE_TAG}
-            else
-              echo "No backend image found to retag. Dumping images:"
-              docker images --no-trunc
-              exit 1
-            fi
-          fi
         '''
       }
     }
 
     stage('Push Images') {
-      agent { label 'docker-capable-node' } // must be the same docker node as Build
       steps {
         script {
           env.DOCKER_REG_HOST = sh(script: 'echo "${DOCKER_REG}" | awk -F"/" \'{print $1}\'', returnStdout: true).trim()
-          echo "Pushing to ${env.DOCKER_REG_HOST} with tag ${env.IMAGE_TAG}"
         }
         withCredentials([usernamePassword(credentialsId: 'docker-cred', usernameVariable: 'DOCKER_REG_USR', passwordVariable: 'DOCKER_REG_PSW')]) {
           sh '''
             set -eux
             echo "Logging in to ${DOCKER_REG_HOST}"
             echo "$DOCKER_REG_PSW" | docker login --username "$DOCKER_REG_USR" --password-stdin ${DOCKER_REG_HOST}
-
-            echo "Sanity: images before push"
-            docker images | grep auto-deploy || true
-
             docker push ${DOCKER_REG}/auto-deploy-backend:${IMAGE_TAG}
             docker push ${DOCKER_REG}/auto-deploy-frontend:${IMAGE_TAG}
           '''
@@ -122,7 +93,6 @@ pipeline {
     }
 
     stage('Deploy to K8s') {
-      agent any
       steps {
         sh '''
           set -eux
@@ -134,8 +104,6 @@ pipeline {
   }
 
   post {
-    failure {
-      echo 'Build failed - notify team'
-    }
+    failure { echo 'Build failed - notify team' }
   }
 }
