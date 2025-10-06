@@ -26,7 +26,6 @@ jobs:
     env:
       DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-      # SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}   # ← Commented out
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -35,18 +34,15 @@ jobs:
         run: |
           echo "PWD: $(pwd)"
           echo "BASE_DIR = ${BASE_DIR}"
+          echo "Listing repo root:"
           ls -la
-          if [ -d "${BASE_DIR}" ]; then
-            ls -la "${BASE_DIR}"
-          else
-            echo "WARNING: BASE_DIR does not exist"
-          fi
+          echo "Listing BASE_DIR:"
+          ls -la 2025-26/Capstone_Project/auto-deploy-project || true
 
-      - name: Setup Node.js
+      - name: Set up Node.js (no cache)
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
 
       - name: Cache backend node modules
         uses: actions/cache@v4
@@ -59,7 +55,9 @@ jobs:
       - name: Backend - Install & Test
         working-directory: 2025-26/Capstone_Project/auto-deploy-project/backend
         run: |
+          echo "Running backend npm ci..."
           npm ci
+          echo "Running backend tests..."
           npm test || true
 
       - name: Cache frontend node modules
@@ -73,7 +71,9 @@ jobs:
       - name: Frontend - Install & Test
         working-directory: 2025-26/Capstone_Project/auto-deploy-project/frontend
         run: |
+          echo "Running frontend npm ci..."
           npm ci
+          echo "Running frontend tests..."
           npm test --watchAll=false || true
 
       - name: Build frontend production bundle (if exists)
@@ -105,10 +105,10 @@ jobs:
           fi
           echo "sanitized=$sanitized" >> "$GITHUB_OUTPUT"
 
-      - name: Debug sanitized user (markers)
+      - name: Debug sanitized user (marker)
         run: |
           echo "SANITIZED_USER ->${{ steps.sanitize_user.outputs.sanitized }}<-"
-      
+
       - name: Set up QEMU (optional multi-arch)
         uses: docker/setup-qemu-action@v3
 
@@ -170,16 +170,3 @@ jobs:
       - name: Trivy scan frontend (CRITICAL,HIGH)
         run: |
           trivy image --severity CRITICAL,HIGH ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-frontend:${{ github.sha }} || true
-
-  # sonar_scan:
-  #   name: SonarQube (optional)
-  #   needs: build
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Checkout repository
-  #       uses: actions/checkout@v4
-  #     - name: Run SonarQube scanner
-  #       run: |
-  #         echo "SonarQube step disabled. Uncomment to enable."
-  #         # Example command:
-  #         # sonar-scanner -Dsonar.login=${{ secrets.SONAR_TOKEN }}
