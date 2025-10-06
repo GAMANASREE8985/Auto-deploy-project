@@ -51,13 +51,14 @@ jobs:
       - name: Cache backend node modules
         uses: actions/cache@v4
         with:
-          path: ${{ env.BASE_DIR }}/backend/node_modules
-          key: ${{ runner.os }}-backend-node-${{ hashFiles(format('{0}/backend/package-lock.json', env.BASE_DIR)) }}
+          # NOTE: avoid using env inside hashFiles expression to prevent validation errors
+          path: 2025-26/Capstone_Project/auto-deploy-project/backend/node_modules
+          key: ${{ runner.os }}-backend-node-${{ hashFiles('2025-26/Capstone_Project/auto-deploy-project/backend/package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-backend-node-
 
       - name: Backend - Install & Test
-        working-directory: ${{ env.BASE_DIR }}/backend
+        working-directory: 2025-26/Capstone_Project/auto-deploy-project/backend
         run: |
           npm ci
           npm test || true
@@ -65,19 +66,19 @@ jobs:
       - name: Cache frontend node modules
         uses: actions/cache@v4
         with:
-          path: ${{ env.BASE_DIR }}/frontend/node_modules
-          key: ${{ runner.os }}-frontend-node-${{ hashFiles(format('{0}/frontend/package-lock.json', env.BASE_DIR)) }}
+          path: 2025-26/Capstone_Project/auto-deploy-project/frontend/node_modules
+          key: ${{ runner.os }}-frontend-node-${{ hashFiles('2025-26/Capstone_Project/auto-deploy-project/frontend/package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-frontend-node-
 
       - name: Frontend - Install & Test
-        working-directory: ${{ env.BASE_DIR }}/frontend
+        working-directory: 2025-26/Capstone_Project/auto-deploy-project/frontend
         run: |
           npm ci
           npm test --watchAll=false || true
 
       - name: Build frontend production bundle (if exists)
-        working-directory: ${{ env.BASE_DIR }}/frontend
+        working-directory: 2025-26/Capstone_Project/auto-deploy-project/frontend
         run: |
           if grep -q "\"build\"" package.json 2>/dev/null; then
             npm run build
@@ -89,18 +90,29 @@ jobs:
     name: Build & Push Docker Images + Scan
     needs: build
     runs-on: ubuntu-latest
-    env:
-      BASE_DIR: ${{ env.BASE_DIR }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Debug DOCKERHUB_USER (safe marker)
+      - name: Sanitize DockerHub username and expose as output
+        id: sanitize_user
         run: |
-          # Print markers to detect accidental spaces or leading slash.
-          # This prints visible markers but not secrets themselves.
-          echo "START_MARKER->${{ secrets.DOCKERHUB_USER }}<-END_MARKER"
+          # read secrets via env (safe here), remove any leading/trailing spaces and slashes
+          raw="${{ secrets.DOCKERHUB_USER }}"
+          # trim whitespace
+          raw="$(echo -n "$raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          # remove any slashes
+          sanitized="$(echo -n "$raw" | tr -d '/')"
+          if [ -z "$sanitized" ]; then
+            echo "ERROR: sanitized Docker Hub username is empty. Please set DOCKERHUB_USER secret correctly."
+            exit 1
+          fi
+          echo "sanitized=$sanitized" >> "$GITHUB_OUTPUT"
 
+      - name: Debug sanitized user (markers)
+        run: |
+          echo "SANITIZED_USER ->${{ steps.sanitize_user.outputs.sanitized }}<-"
+      
       - name: Set up QEMU (optional multi-arch)
         uses: docker/setup-qemu-action@v3
 
@@ -123,14 +135,14 @@ jobs:
           fi
 
       - name: Build and push backend image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v4
         with:
-          context: ${{ env.BASE_DIR }}/backend
-          file: ${{ env.BASE_DIR }}/backend/Dockerfile
+          context: 2025-26/Capstone_Project/auto-deploy-project/backend
+          file: 2025-26/Capstone_Project/auto-deploy-project/backend/Dockerfile
           push: true
           tags: |
-            ${{ replace(secrets.DOCKERHUB_USER, '/', '') }}/auto-deploy-backend:${{ github.sha }}
-            ${{ replace(secrets.DOCKERHUB_USER, '/', '') }}/auto-deploy-backend:latest
+            ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-backend:${{ github.sha }}
+            ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-backend:latest
 
       - name: Ensure frontend Dockerfile exists (fail early)
         run: |
@@ -142,14 +154,14 @@ jobs:
           fi
 
       - name: Build and push frontend image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v4
         with:
-          context: ${{ env.BASE_DIR }}/frontend
-          file: ${{ env.BASE_DIR }}/frontend/Dockerfile
+          context: 2025-26/Capstone_Project/auto-deploy-project/frontend
+          file: 2025-26/Capstone_Project/auto-deploy-project/frontend/Dockerfile
           push: true
           tags: |
-            ${{ replace(secrets.DOCKERHUB_USER, '/', '') }}/auto-deploy-frontend:${{ github.sha }}
-            ${{ replace(secrets.DOCKERHUB_USER, '/', '') }}/auto-deploy-frontend:latest
+            ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-frontend:${{ github.sha }}
+            ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-frontend:latest
 
       - name: Install Trivy
         run: |
@@ -157,20 +169,22 @@ jobs:
 
       - name: Trivy scan backend (CRITICAL,HIGH)
         run: |
-          trivy image --severity CRITICAL,HIGH ${{ replace(secrets.DOCKERHUB_USER, '/', '') }}/auto-deploy-backend:${{ github.sha }} || true
+          trivy image --severity CRITICAL,HIGH ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-backend:${{ github.sha }} || true
 
       - name: Trivy scan frontend (CRITICAL,HIGH)
         run: |
-          trivy image --severity CRITICAL,HIGH ${{ replace(secrets.DOCKERHUB_USER, '/', '') }}/auto-deploy-frontend:${{ github.sha }} || true
+          trivy image --severity CRITICAL,HIGH ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-frontend:${{ github.sha }} || true
 
   sonar_scan:
     name: SonarQube (optional)
     needs: build
     runs-on: ubuntu-latest
-    if: ${{ secrets.SONAR_TOKEN != '' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      - name: SonarQube placeholder
+
+      - name: Run SonarQube scanner (only if SONAR_TOKEN present)
+        if: ${{ secrets.SONAR_TOKEN != '' }}
         run: |
-          echo "Add Sonar scanner steps here (sonar-scanner CLI or action)."
+          echo "SONAR_TOKEN present — add sonar-scanner or action here."
+          # Example: set up sonar-scanner and run it using secrets.SONAR_TOKEN
