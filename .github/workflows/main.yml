@@ -26,7 +26,7 @@ jobs:
     env:
       DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      # SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}   # ← Commented out
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -51,7 +51,6 @@ jobs:
       - name: Cache backend node modules
         uses: actions/cache@v4
         with:
-          # NOTE: avoid using env inside hashFiles expression to prevent validation errors
           path: 2025-26/Capstone_Project/auto-deploy-project/backend/node_modules
           key: ${{ runner.os }}-backend-node-${{ hashFiles('2025-26/Capstone_Project/auto-deploy-project/backend/package-lock.json') }}
           restore-keys: |
@@ -97,11 +96,8 @@ jobs:
       - name: Sanitize DockerHub username and expose as output
         id: sanitize_user
         run: |
-          # read secrets via env (safe here), remove any leading/trailing spaces and slashes
           raw="${{ secrets.DOCKERHUB_USER }}"
-          # trim whitespace
           raw="$(echo -n "$raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-          # remove any slashes
           sanitized="$(echo -n "$raw" | tr -d '/')"
           if [ -z "$sanitized" ]; then
             echo "ERROR: sanitized Docker Hub username is empty. Please set DOCKERHUB_USER secret correctly."
@@ -175,16 +171,15 @@ jobs:
         run: |
           trivy image --severity CRITICAL,HIGH ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-frontend:${{ github.sha }} || true
 
-  sonar_scan:
-    name: SonarQube (optional)
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Run SonarQube scanner (only if SONAR_TOKEN present)
-        if: ${{ secrets.SONAR_TOKEN != '' }}
-        run: |
-          echo "SONAR_TOKEN present — add sonar-scanner or action here."
-          # Example: set up sonar-scanner and run it using secrets.SONAR_TOKEN
+  # sonar_scan:
+  #   name: SonarQube (optional)
+  #   needs: build
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Checkout repository
+  #       uses: actions/checkout@v4
+  #     - name: Run SonarQube scanner
+  #       run: |
+  #         echo "SonarQube step disabled. Uncomment to enable."
+  #         # Example command:
+  #         # sonar-scanner -Dsonar.login=${{ secrets.SONAR_TOKEN }}
