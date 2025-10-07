@@ -93,14 +93,51 @@ pipeline {
     }
 
     stage('Deploy to K8s') {
-      steps {
+  steps {
+    // ensure this credentialsId matches the Secret File you added to Jenkins
+    withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG_FILE')]) {
+      sh '''
+        set -eux
+
+        mkdir -p $HOME/.kube
+        cp "$KUBECONFIG_FILE" $HOME/.kube/config
+        chmod 600 $HOME/.kube/config
+
+        echo "Verify connection:"
+        kubectl version --short
+        kubectl get ns || true
+
+        # deploy backend
+        kubectl -n auto-deploy set image deployment/backend backend=${DOCKER_REG}/auto-deploy-backend:${IMAGE_TAG}
+        kubectl -n auto-deploy rollout status deployment/backend --timeout=120s
+
+        # deploy frontend
+        kubectl -n auto-deploy set image deployment/frontend frontend=${DOCKER_REG}/auto-deploy-frontend:${IMAGE_TAG}
+        kubectl -n auto-deploy rollout status deployment/frontend --timeout=120s
+      '''
+    }
+  }
+  post {
+    failure {
+      // automatic rollback on failure
+      withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG_FILE')]) {
         sh '''
-          set -eux
-          kubectl set image deployment/backend backend=${DOCKER_REG}/auto-deploy-backend:${IMAGE_TAG} -n auto-deploy || true
-          kubectl set image deployment/frontend frontend=${DOCKER_REG}/auto-deploy-frontend:${IMAGE_TAG} -n auto-deploy || true
+          mkdir -p $HOME/.kube
+          cp "$KUBECONFIG_FILE" $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+          echo "Deployment failed — performing rollback on both deployments"
+          kubectl -n auto-deploy rollout undo deployment/backend || true
+          kubectl -n auto-deploy rollout status deployment/backend --timeout=120s || true
+
+          kubectl -n auto-deploy rollout undo deployment/frontend || true
+          kubectl -n auto-deploy rollout status deployment/frontend --timeout=120s || true
         '''
       }
     }
+  }
+}
+
   }
 
   post {
