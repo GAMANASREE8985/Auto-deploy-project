@@ -158,12 +158,13 @@ jobs:
             exit 1
           fi
 
-      - name: Fix permissions for frontend scripts (GitHub Actions only)
+      # 🔧 CRITICAL FIX FOR GITHUB ACTIONS (Safe for Jenkins)
+      - name: Fix permissions before building frontend image
         run: |
-          echo "Fixing permissions for frontend..."
-          chmod -R a+rX 2025-26/Capstone_Project/auto-deploy-project/frontend || true
-          chmod -R a+rX 2025-26/Capstone_Project/auto-deploy-project/frontend/node_modules/.bin || true
-          echo "Permissions fixed. Proceeding to build image."
+          echo "Fixing permissions for frontend source and node_modules..."
+          chmod -R 777 2025-26/Capstone_Project/auto-deploy-project/frontend || true
+          chmod -R 777 2025-26/Capstone_Project/auto-deploy-project/frontend/node_modules/.bin || true
+          echo "Permissions fixed successfully."
 
       - name: Build and push frontend Docker image
         uses: docker/build-push-action@v4
