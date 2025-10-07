@@ -149,6 +149,13 @@ jobs:
             exit 1
           fi
 
+      - name: Fix file permissions for frontend (GitHub Actions runner)
+        run: |
+          echo "Fixing file permissions for frontend source..."
+          chmod -R a+rX 2025-26/Capstone_Project/auto-deploy-project/frontend || true
+          echo "Listing frontend (short):"
+          ls -la 2025-26/Capstone_Project/auto-deploy-project/frontend | head -40
+
       - name: Build and push frontend image
         uses: docker/build-push-action@v4
         with:
