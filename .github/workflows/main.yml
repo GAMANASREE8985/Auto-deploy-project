@@ -39,11 +39,14 @@ jobs:
           echo "Listing BASE_DIR:"
           ls -la 2025-26/Capstone_Project/auto-deploy-project || true
 
-      - name: Set up Node.js (no cache)
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      # -------------------------
+      # BACKEND BUILD + TEST
+      # -------------------------
       - name: Cache backend node modules
         uses: actions/cache@v4
         with:
@@ -55,11 +58,14 @@ jobs:
       - name: Backend - Install & Test
         working-directory: 2025-26/Capstone_Project/auto-deploy-project/backend
         run: |
-          echo "Running backend npm ci..."
+          echo "Installing backend dependencies..."
           npm ci
           echo "Running backend tests..."
           npm test || true
 
+      # -------------------------
+      # FRONTEND BUILD + TEST
+      # -------------------------
       - name: Cache frontend node modules
         uses: actions/cache@v4
         with:
@@ -71,7 +77,7 @@ jobs:
       - name: Frontend - Install & Test
         working-directory: 2025-26/Capstone_Project/auto-deploy-project/frontend
         run: |
-          echo "Running frontend npm ci..."
+          echo "Installing frontend dependencies..."
           npm ci
           echo "Running frontend tests..."
           npm test --watchAll=false || true
@@ -86,30 +92,29 @@ jobs:
           fi
 
   docker_and_scan:
-    name: Build & Push Docker Images + Scan
+    name: Build & Push Docker Images + Security Scan
     needs: build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Sanitize DockerHub username and expose as output
+      - name: Sanitize DockerHub username
         id: sanitize_user
         run: |
           raw="${{ secrets.DOCKERHUB_USER }}"
           raw="$(echo -n "$raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
           sanitized="$(echo -n "$raw" | tr -d '/')"
           if [ -z "$sanitized" ]; then
-            echo "ERROR: sanitized Docker Hub username is empty. Please set DOCKERHUB_USER secret correctly."
+            echo "ERROR: DockerHub username empty! Check DOCKERHUB_USER secret."
             exit 1
           fi
           echo "sanitized=$sanitized" >> "$GITHUB_OUTPUT"
 
-      - name: Debug sanitized user (marker)
-        run: |
-          echo "SANITIZED_USER ->${{ steps.sanitize_user.outputs.sanitized }}<-"
+      - name: Debug sanitized username
+        run: echo "DockerHub sanitized username -> ${{ steps.sanitize_user.outputs.sanitized }}"
 
-      - name: Set up QEMU (optional multi-arch)
+      - name: Set up QEMU (multi-arch support)
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
@@ -121,16 +126,18 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Ensure backend Dockerfile exists (fail early)
+      # -------------------------
+      # BACKEND DOCKER BUILD
+      # -------------------------
+      - name: Ensure backend Dockerfile exists
         run: |
-          echo "Checking backend Dockerfile: ${{ env.BASE_DIR }}/backend/Dockerfile"
           if [ ! -f "${{ env.BASE_DIR }}/backend/Dockerfile" ]; then
-            echo "::error ::Backend Dockerfile missing at ${{ env.BASE_DIR }}/backend/Dockerfile"
+            echo "::error ::Backend Dockerfile missing!"
             ls -la "${{ env.BASE_DIR }}/backend" || true
             exit 1
           fi
 
-      - name: Build and push backend image
+      - name: Build and push backend Docker image
         uses: docker/build-push-action@v4
         with:
           context: 2025-26/Capstone_Project/auto-deploy-project/backend
@@ -140,23 +147,25 @@ jobs:
             ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-backend:${{ github.sha }}
             ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-backend:latest
 
-      - name: Ensure frontend Dockerfile exists (fail early)
+      # -------------------------
+      # FRONTEND DOCKER BUILD
+      # -------------------------
+      - name: Ensure frontend Dockerfile exists
         run: |
-          echo "Checking frontend Dockerfile: ${{ env.BASE_DIR }}/frontend/Dockerfile"
           if [ ! -f "${{ env.BASE_DIR }}/frontend/Dockerfile" ]; then
-            echo "::error ::Frontend Dockerfile missing at ${{ env.BASE_DIR }}/frontend/Dockerfile"
+            echo "::error ::Frontend Dockerfile missing!"
             ls -la "${{ env.BASE_DIR }}/frontend" || true
             exit 1
           fi
 
-      - name: Fix file permissions for frontend (GitHub Actions runner)
+      - name: Fix permissions for frontend scripts (GitHub Actions only)
         run: |
-          echo "Fixing file permissions for frontend source..."
+          echo "Fixing permissions for frontend..."
           chmod -R a+rX 2025-26/Capstone_Project/auto-deploy-project/frontend || true
-          echo "Listing frontend (short):"
-          ls -la 2025-26/Capstone_Project/auto-deploy-project/frontend | head -40
+          chmod -R a+rX 2025-26/Capstone_Project/auto-deploy-project/frontend/node_modules/.bin || true
+          echo "Permissions fixed. Proceeding to build image."
 
-      - name: Build and push frontend image
+      - name: Build and push frontend Docker image
         uses: docker/build-push-action@v4
         with:
           context: 2025-26/Capstone_Project/auto-deploy-project/frontend
@@ -166,7 +175,10 @@ jobs:
             ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-frontend:${{ github.sha }}
             ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-frontend:latest
 
-      - name: Install Trivy
+      # -------------------------
+      # SECURITY SCANS
+      # -------------------------
+      - name: Install Trivy (security scanner)
         run: |
           curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
 
