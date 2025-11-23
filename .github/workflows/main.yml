@@ -1,12 +1,10 @@
-name: CI / Build / Docker Push / Scan
-
-# Triggers - push to main and manual
+name: CI
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
   workflow_dispatch:
 
-# Global env - update BASE_DIR to match your repo layout
 env:
   NODE_VERSION: 18
   BASE_DIR: 2025-26/Capstone_Project/auto-deploy-project
@@ -21,98 +19,109 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci-build:
-    name: Run unit tests and build artifacts
+  build:
+    name: Build & Test
     runs-on: ubuntu-latest
     env:
       DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Show repo layout (debug)
         run: |
-          echo "WORKDIR: $(pwd)"
-          echo "BASE_DIR -> ${BASE_DIR}"
+          echo "PWD: $(pwd)"
+          echo "BASE_DIR = ${BASE_DIR}"
+          echo "Listing repo root:"
           ls -la
-          if [ -d "${BASE_DIR}" ]; then
-            echo "BASE_DIR exists:"
-            ls -la "${BASE_DIR}"
-          else
-            echo "WARNING: BASE_DIR does not exist - check path"
-          fi
+          echo "Listing BASE_DIR:"
+          ls -la 2025-26/Capstone_Project/auto-deploy-project || true
 
-      - name: Setup Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
 
-      # Backend cache + tests
+      # -------------------------
+      # BACKEND BUILD + TEST
+      # -------------------------
       - name: Cache backend node modules
         uses: actions/cache@v4
         with:
-          path: ${{ env.BASE_DIR }}/backend/node_modules
-          key: ${{ runner.os }}-backend-node-${{ hashFiles(format('{0}/backend/package-lock.json', env.BASE_DIR)) }}
+          path: 2025-26/Capstone_Project/auto-deploy-project/backend/node_modules
+          key: ${{ runner.os }}-backend-node-${{ hashFiles('2025-26/Capstone_Project/auto-deploy-project/backend/package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-backend-node-
 
       - name: Backend - Install & Test
-        working-directory: ${{ env.BASE_DIR }}/backend
+        working-directory: 2025-26/Capstone_Project/auto-deploy-project/backend
         run: |
-          echo "Running backend install/test..."
+          echo "Installing backend dependencies..."
           npm ci
-          npm test || true   # keep job alive if you want to collect reports; change as needed
+          echo "Running backend tests..."
+          npm test || true
 
-      # Frontend cache + tests
+      # -------------------------
+      # FRONTEND BUILD + TEST
+      # -------------------------
       - name: Cache frontend node modules
         uses: actions/cache@v4
         with:
-          path: ${{ env.BASE_DIR }}/frontend/node_modules
-          key: ${{ runner.os }}-frontend-node-${{ hashFiles(format('{0}/frontend/package-lock.json', env.BASE_DIR)) }}
+          path: 2025-26/Capstone_Project/auto-deploy-project/frontend/node_modules
+          key: ${{ runner.os }}-frontend-node-${{ hashFiles('2025-26/Capstone_Project/auto-deploy-project/frontend/package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-frontend-node-
 
       - name: Frontend - Install & Test
-        working-directory: ${{ env.BASE_DIR }}/frontend
+        working-directory: 2025-26/Capstone_Project/auto-deploy-project/frontend
         run: |
-          echo "Running frontend install/test..."
+          echo "Installing frontend dependencies..."
           npm ci
+          echo "Running frontend tests..."
           npm test --watchAll=false || true
 
       - name: Build frontend production bundle (if exists)
-        working-directory: ${{ env.BASE_DIR }}/frontend
+        working-directory: 2025-26/Capstone_Project/auto-deploy-project/frontend
         run: |
-          if grep -q "\"build\"" package.json; then
+          if grep -q "\"build\"" package.json 2>/dev/null; then
             npm run build
           else
             echo "No build script found for frontend."
           fi
 
-  docker-and-scan:
-    name: Build Docker images, push to Docker Hub, and run Trivy scans
-    needs: ci-build
+  docker_and_scan:
+    name: Build & Push Docker Images + Security Scan
+    needs: build
     runs-on: ubuntu-latest
     env:
-      BASE_DIR: ${{ env.BASE_DIR }}
-      DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
-      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      # expose SONAR secrets for the job so step-level 'if' can test env safely
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up QEMU (optional multi-arch)
+      - name: Sanitize DockerHub username
+        id: sanitize_user
+        run: |
+          raw="${{ secrets.DOCKERHUB_USER }}"
+          raw="$(echo -n "$raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          sanitized="$(echo -n "$raw" | tr -d '/')"
+          if [ -z "$sanitized" ]; then
+            echo "ERROR: DockerHub username empty! Check DOCKERHUB_USER secret."
+            exit 1
+          fi
+          echo "sanitized=$sanitized" >> "$GITHUB_OUTPUT"
+
+      - name: Debug sanitized username
+        run: echo "DockerHub sanitized username -> ${{ steps.sanitize_user.outputs.sanitized }}"
+
+      - name: Set up QEMU (multi-arch support)
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Debug DockerHub user (do not expose in public logs)
-        run: |
-          # print markers to detect leading/trailing spaces or slashes
-          printf 'DOCKERHUB_USER ->%s<-\n' "${{ secrets.DOCKERHUB_USER }}"
 
       - name: Login to DockerHub
         uses: docker/login-action@v2
@@ -120,50 +129,121 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push backend image
-        uses: docker/build-push-action@v5
-        with:
-          context: ${{ env.BASE_DIR }}/backend
-          file: ${{ env.BASE_DIR }}/backend/Dockerfile
-          push: true
-          # sanitize DOCKERHUB_USER: remove any starting slash (should be fixed in secrets)
-          tags: |
-            ${{ secrets.DOCKERHUB_USER }}/auto-deploy-backend:${{ github.sha }}
-            ${{ secrets.DOCKERHUB_USER }}/auto-deploy-backend:latest
+      # -------------------------
+      # BACKEND DOCKER BUILD
+      # -------------------------
+      - name: Ensure backend Dockerfile exists
+        run: |
+          if [ ! -f "${{ env.BASE_DIR }}/backend/Dockerfile" ]; then
+            echo "::error ::Backend Dockerfile missing!"
+            ls -la "${{ env.BASE_DIR }}/backend" || true
+            exit 1
+          fi
 
-      - name: Build and push frontend image
-        uses: docker/build-push-action@v5
+      - name: Build and push backend Docker image
+        uses: docker/build-push-action@v4
         with:
-          context: ${{ env.BASE_DIR }}/frontend
-          file: ${{ env.BASE_DIR }}/frontend/Dockerfile
+          context: 2025-26/Capstone_Project/auto-deploy-project/backend
+          file: 2025-26/Capstone_Project/auto-deploy-project/backend/Dockerfile
           push: true
           tags: |
-            ${{ secrets.DOCKERHUB_USER }}/auto-deploy-frontend:${{ github.sha }}
-            ${{ secrets.DOCKERHUB_USER }}/auto-deploy-frontend:latest
+            ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-backend:${{ github.sha }}
+            ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-backend:latest
 
-      - name: Install Trivy
+      # -------------------------
+      # FRONTEND DOCKER BUILD
+      # -------------------------
+      - name: Ensure frontend Dockerfile exists
+        run: |
+          if [ ! -f "${{ env.BASE_DIR }}/frontend/Dockerfile" ]; then
+            echo "::error ::Frontend Dockerfile missing!"
+            ls -la "${{ env.BASE_DIR }}/frontend" || true
+            exit 1
+          fi
+
+      # 🔧 CRITICAL FIX FOR GITHUB ACTIONS (Safe for Jenkins)
+      - name: Fix permissions before building frontend image
+        run: |
+          echo "Fixing permissions for frontend source and node_modules..."
+          chmod -R 777 2025-26/Capstone_Project/auto-deploy-project/frontend || true
+          chmod -R 777 2025-26/Capstone_Project/auto-deploy-project/frontend/node_modules/.bin || true
+          echo "Permissions fixed successfully."
+
+      - name: Build and push frontend Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: 2025-26/Capstone_Project/auto-deploy-project/frontend
+          file: 2025-26/Capstone_Project/auto-deploy-project/frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-frontend:${{ github.sha }}
+            ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-frontend:latest
+
+      # -------------------------
+      # SECURITY SCANS
+      # -------------------------
+      - name: Install Trivy (security scanner)
         run: |
           curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
 
-      - name: Trivy scan: backend (CRITICAL,HIGH)
+      - name: Trivy scan backend (CRITICAL,HIGH)
         run: |
-          echo "Scanning backend image..."
-          trivy image --severity CRITICAL,HIGH ${{ secrets.DOCKERHUB_USER }}/auto-deploy-backend:${{ github.sha }} || true
+          trivy image --severity CRITICAL,HIGH ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-backend:${{ github.sha }} || true
 
-      - name: Trivy scan: frontend (CRITICAL,HIGH)
+      - name: Trivy scan frontend (CRITICAL,HIGH)
         run: |
-          echo "Scanning frontend image..."
-          trivy image --severity CRITICAL,HIGH ${{ secrets.DOCKERHUB_USER }}/auto-deploy-frontend:${{ github.sha }} || true
+          trivy image --severity CRITICAL,HIGH ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-frontend:${{ github.sha }} || true
 
-  sonar-scan:
-    name: SonarQube scan (placeholder)
-    needs: ci-build
-    runs-on: ubuntu-latest
-    if: ${{ secrets.SONAR_TOKEN != '' }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Run Sonar scanner (customize)
+      # -------------------------
+      # SONARQUBE STATIC CODE ANALYSIS (NEW)
+      # non-blocking by default to keep your current behavior
+      # -------------------------
+      - name: Install Sonar Scanner
         run: |
-          echo "Configure Sonar scanner (sonar-scanner CLI or github action) here."
+          curl -sSfL https://raw.githubusercontent.com/SonarSource/sonar-scanner-cli/master/install.sh \
+          | sh -s -- -b /usr/local/bin
+
+      - name: SonarQube scan
+        if: ${{ env.SONAR_TOKEN != '' }}
+        working-directory: 2025-26/Capstone_Project/auto-deploy-project/backend
+        run: |
+          echo "Running Sonar analysis against ${SONAR_HOST_URL}"
+          sonar-scanner \
+            -Dsonar.projectKey=auto-deploy-backend \
+            -Dsonar.sources=. \
+            -Dsonar.host.url=${SONAR_HOST_URL} \
+            -Dsonar.login=$SONAR_TOKEN || true
+
+      # -------------------------
+      # SBOM GENERATION (SYFT) + SAVE TRIVY JSON REPORTS (NEW)
+      # -------------------------
+      - name: Create reports folder
+        run: mkdir -p reports
+
+      - name: Install Syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Generate SBOMs (backend & frontend)
+        run: |
+          syft 2025-26/Capstone_Project/auto-deploy-project/backend -o json > reports/sbom-backend-${{ github.sha }}.json || true
+          syft 2025-26/Capstone_Project/auto-deploy-project/frontend -o json > reports/sbom-frontend-${{ github.sha }}.json || true
+
+      - name: Trivy scan - save JSON (backend image)
+        run: |
+          trivy image --format json --output reports/trivy-backend-${{ github.sha }}.json \
+          ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-backend:${{ github.sha }} || true
+
+      - name: Trivy scan - save JSON (frontend image)
+        run: |
+          trivy image --format json --output reports/trivy-frontend-${{ github.sha }}.json \
+          ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-frontend:${{ github.sha }} || true
+
+      # -------------------------
+      # UPLOAD SECURITY ARTIFACTS (NEW)
+      # -------------------------
+      - name: Upload SBOM & Trivy reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports-${{ github.sha }}
+          path: reports/
