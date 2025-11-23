@@ -1,5 +1,4 @@
 name: CI
-
 on:
   push:
     branches:
@@ -113,7 +112,6 @@ jobs:
       # expose SONAR secrets for the job so step-level 'if' can test env safely
       SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      BASE_DIR: 2025-26/Capstone_Project/auto-deploy-project
 
     steps:
 
@@ -274,71 +272,6 @@ jobs:
           else
             echo "SONAR_TOKEN not provided; skipping Sonar scan"
           fi
-
-      # ----------------------------------------------------------------
-      # NEW BLOCK: PDF generation (auto) — uses pandoc/wkhtmltopdf and includes
-      # the generated summaries + the uploaded paper path as reference
-      # ----------------------------------------------------------------
-
-      - name: Install Pandoc & wkhtmltopdf
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y pandoc wkhtmltopdf jq || true
-
-      - name: Copy thesis/paper (local path) into pdf_reports
-        run: |
-          mkdir -p pdf_reports
-          # copy the uploaded local paper path (your provided file) into pdf_reports
-          cp "/mnt/data/Automated Software Deployment System with Integrated Testing Pipelines_gammu1.pdf" pdf_reports/ || true
-
-      - name: Generate Security PDF Report
-        run: |
-          mkdir -p pdf_reports
-          REPORT_MD=report-${GITHUB_SHA}.md
-          PDF_OUT=pdf_reports/security-report-${GITHUB_SHA}.pdf
-
-          echo "# Security Scan Report" > ${REPORT_MD}
-          echo "" >> ${REPORT_MD}
-          echo "**Repository:** $GITHUB_REPOSITORY" >> ${REPORT_MD}
-          echo "" >> ${REPORT_MD}
-          echo "**Commit:** $GITHUB_SHA" >> ${REPORT_MD}
-          echo "" >> ${REPORT_MD}
-          echo "**Generated on:** $(date --iso-8601=seconds)" >> ${REPORT_MD}
-          echo "" >> ${REPORT_MD}
-
-          echo "## SBOM Files" >> ${REPORT_MD}
-          echo "" >> ${REPORT_MD}
-          echo "- sbom-backend-${GITHUB_SHA}.json" >> ${REPORT_MD}
-          echo "- sbom-frontend-${GITHUB_SHA}.json" >> ${REPORT_MD}
-          echo "" >> ${REPORT_MD}
-
-          echo "## Trivy Vulnerability Summary (Critical & High)" >> ${REPORT_MD}
-          echo "" >> ${REPORT_MD}
-          echo "### Backend Image" >> ${REPORT_MD}
-          echo '```' >> ${REPORT_MD}
-          trivy image --severity CRITICAL,HIGH --format table ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-backend:${GITHUB_SHA} | sed 's/^/    /' >> ${REPORT_MD} || echo "No critical/high findings or trivy error" >> ${REPORT_MD}
-          echo '```' >> ${REPORT_MD}
-          echo "" >> ${REPORT_MD}
-
-          echo "### Frontend Image" >> ${REPORT_MD}
-          echo '```' >> ${REPORT_MD}
-          trivy image --severity CRITICAL,HIGH --format table ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-frontend:${GITHUB_SHA} | sed 's/^/    /' >> ${REPORT_MD} || echo "No critical/high findings or trivy error" >> ${REPORT_MD}
-          echo '```' >> ${REPORT_MD}
-          echo "" >> ${REPORT_MD}
-
-          echo "## Quick notes" >> ${REPORT_MD}
-          echo "- SBOM and Trivy JSON files are attached as artifacts." >> ${REPORT_MD}
-          echo "- Original project paper (copied) is included in pdf_reports/ for reference." >> ${REPORT_MD}
-          echo "" >> ${REPORT_MD}
-
-          # Convert Markdown to PDF
-          pandoc "${REPORT_MD}" -o "${PDF_OUT}" || (echo "pandoc failed, trying wkhtmltopdf fallback" && echo "<pre>$(cat ${REPORT_MD} | sed 's/&/\&amp;/g; s/< /&lt; /g')</pre>" > tmp.html && wkhtmltopdf tmp.html "${PDF_OUT}" || true)
-
-      - name: Upload PDF Report
-        uses: actions/upload-artifact@v4
-        with:
-          name: pdf-report-${{ github.sha }}
-          path: pdf_reports/security-report-${{ github.sha }}.pdf
 
       - name: Upload SBOM & Trivy reports
         uses: actions/upload-artifact@v4
