@@ -273,6 +273,50 @@ jobs:
             echo "SONAR_TOKEN not provided; skipping Sonar scan"
           fi
 
+      # ============================
+      # NEW FEATURE: GitOps auto-update
+      # (updates image tags in overlays/prod, commit & push)
+      # ============================
+      - name: Clone GitOps repo (for updates)
+        env:
+          GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
+        run: |
+          set -eux
+          # clone using PAT so push is allowed
+          git clone https://x-access-token:${GITOPS_PAT}@github.com/GAMANASREE8985/Auto-deploy-project.git gitops || true
+
+      - name: Update image tags in GitOps overlays
+        run: |
+          set -eux
+          cd gitops || exit 0
+          if [ -d "overlays/prod" ]; then
+            echo "Updating backend image tags under overlays/prod..."
+            find overlays/prod -type f -exec sed -i "s#auto-deploy-backend:[^[:space:]\"']*#${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-backend:${GITHUB_SHA}#g" {} + || true
+
+            echo "Updating frontend image tags under overlays/prod..."
+            find overlays/prod -type f -exec sed -i "s#auto-deploy-frontend:[^[:space:]\"']*#${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-frontend:${GITHUB_SHA}#g" {} + || true
+          else
+            echo "overlays/prod not found in gitops repo; skipping update."
+          fi
+
+      - name: Commit & push GitOps changes
+        env:
+          GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
+        run: |
+          set -eux
+          cd gitops || exit 0
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+          git add overlays/prod || true
+          if git diff --cached --quiet; then
+            echo "No GitOps changes to commit"
+          else
+            git commit -m "ci: update images to ${GITHUB_SHA}" || true
+            # push using PAT
+            git push https://x-access-token:${GITOPS_PAT}@github.com/GAMANASREE8985/Auto-deploy-project.git HEAD:main || true
+            echo "Pushed GitOps update"
+          fi
+
       - name: Upload SBOM & Trivy reports
         uses: actions/upload-artifact@v4
         with:
