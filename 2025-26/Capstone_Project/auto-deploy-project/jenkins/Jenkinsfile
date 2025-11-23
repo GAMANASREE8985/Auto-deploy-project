@@ -61,6 +61,47 @@ pipeline {
       }
     }
 
+    // ---------- NEW: SonarQube Static Analysis ----------
+    stage('Static Analysis (SonarQube)') {
+      steps {
+        // run scan in backend directory; keeps existing flow unchanged
+        dir("${BASEDIR}/backend") {
+          withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+            sh '''
+              echo "Running SonarQube scan for backend..."
+              # Option A: if sonar-scanner is installed on the agent
+              sonar-scanner \
+                -Dsonar.projectKey=auto-deploy-backend \
+                -Dsonar.sources=. \
+                -Dsonar.host.url=https://sonarqube.example.com \
+                -Dsonar.login=${SONAR_TOKEN} || true
+
+              # Option B (fallback): run sonar-scanner via docker (uncomment if you prefer)
+              # docker run --rm -v "$(pwd):/usr/src" -e SONAR_HOST_URL=https://sonarqube.example.com -e SONAR_LOGIN=${SONAR_TOKEN} sonarsource/sonar-scanner-cli \
+              #   -Dsonar.projectKey=auto-deploy-backend -Dsonar.sources=/usr/src || true
+            '''
+          }
+        }
+
+        // optional: scan frontend too (kept commented so your current behavior is unchanged)
+        /*
+        dir("${BASEDIR}/frontend") {
+          withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+            sh '''
+              echo "Running SonarQube scan for frontend..."
+              sonar-scanner \
+                -Dsonar.projectKey=auto-deploy-frontend \
+                -Dsonar.sources=. \
+                -Dsonar.host.url=https://sonarqube.example.com \
+                -Dsonar.login=${SONAR_TOKEN} || true
+            '''
+          }
+        }
+        */
+      }
+    }
+    // ----------------------------------------------------
+
     stage('Build Docker Images') {
       steps {
         script {
