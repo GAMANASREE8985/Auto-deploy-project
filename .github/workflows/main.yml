@@ -190,3 +190,44 @@ jobs:
       - name: Trivy scan frontend (CRITICAL,HIGH)
         run: |
           trivy image --severity CRITICAL,HIGH ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-frontend:${{ github.sha }} || true
+
+      # -------------------------
+      # SONARQUBE STATIC CODE ANALYSIS
+      # -------------------------
+      - name: Install Sonar Scanner
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/SonarSource/sonar-scanner-cli/master/install.sh \
+          | sh -s -- -b /usr/local/bin
+
+      - name: SonarQube scan
+        if: ${{ secrets.SONAR_TOKEN != '' }}
+        working-directory: 2025-26/Capstone_Project/auto-deploy-project/backend
+        run: |
+          sonar-scanner \
+            -Dsonar.projectKey=auto-deploy-backend \
+            -Dsonar.sources=. \
+            -Dsonar.host.url=http://localhost:9000 \
+            -Dsonar.login=${{ secrets.SONAR_TOKEN }} || true
+
+      # -------------------------
+      # SBOM GENERATION (SYFT)
+      # -------------------------
+      - name: Install Syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+          | sh -s -- -b /usr/local/bin
+
+      - name: Create SBOM reports
+        run: |
+          mkdir -p reports
+          syft 2025-26/Capstone_Project/auto-deploy-project/backend -o json > reports/sbom-backend-${{ github.sha }}.json || true
+          syft 2025-26/Capstone_Project/auto-deploy-project/frontend -o json > reports/sbom-frontend-${{ github.sha }}.json || true
+
+      # -------------------------
+      # UPLOAD SECURITY ARTIFACTS
+      # -------------------------
+      - name: Upload SBOM & Trivy reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports-${{ github.sha }}
+          path: reports/
