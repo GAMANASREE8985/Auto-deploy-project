@@ -1,5 +1,4 @@
 name: CI
-
 on:
   push:
     branches:
@@ -109,6 +108,11 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
 
+    env:
+      # expose SONAR secrets for the job so step-level 'if' can test env safely
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
     steps:
 
       - name: Checkout repository
@@ -213,4 +217,64 @@ jobs:
       - name: Trivy scan frontend
         run: |
           trivy image --severity CRITICAL,HIGH \
-            ${{ steps.sanitize_user.outputs.sanitize_user.outputs.sanitized }}/auto-deploy-frontend:${{ github.sha }} || true
+            ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-frontend:${{ github.sha }} || true
+
+      # ----------------------------------------------------------------
+      # NEW BLOCK: SBOM, Trivy JSON reports, Sonar scan, upload artifact
+      # (added only — original steps above are unchanged)
+      # ----------------------------------------------------------------
+
+      - name: Create reports folder
+        run: mkdir -p reports
+
+      - name: Install Syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+            | sh -s -- -b /usr/local/bin || true
+
+      - name: Generate SBOMs (backend & frontend)
+        run: |
+          syft "${{ env.BASE_DIR }}/backend" -o json > reports/sbom-backend-${{ github.sha }}.json || true
+          syft "${{ env.BASE_DIR }}/frontend" -o json > reports/sbom-frontend-${{ github.sha }}.json || true
+
+      - name: Ensure Trivy installed
+        run: |
+          which trivy || (curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin) || true
+
+      - name: Trivy scan - save JSON (backend image)
+        run: |
+          trivy image --format json --output reports/trivy-backend-${{ github.sha }}.json \
+            ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-backend:${{ github.sha }} || true
+
+      - name: Trivy scan - save JSON (frontend image)
+        run: |
+          trivy image --format json --output reports/trivy-frontend-${{ github.sha }}.json \
+            ${{ steps.sanitize_user.outputs.sanitized }}/auto-deploy-frontend:${{ github.sha }} || true
+
+      - name: Install Sonar Scanner
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/SonarSource/sonar-scanner-cli/master/install.sh \
+            | sh -s -- -b /usr/local/bin || true
+
+      - name: SonarQube scan (non-blocking)
+        env:
+          SONAR_HOST: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -n "${SONAR_TOKEN}" ]; then
+            echo "Running Sonar scan against ${SONAR_HOST} (non-blocking)"
+            cd "${{ env.BASE_DIR }}/backend" || true
+            sonar-scanner \
+              -Dsonar.projectKey=auto-deploy-backend \
+              -Dsonar.sources=. \
+              -Dsonar.host.url="${SONAR_HOST}" \
+              -Dsonar.login="${SONAR_TOKEN}" || true
+          else
+            echo "SONAR_TOKEN not provided; skipping Sonar scan"
+          fi
+
+      - name: Upload SBOM & Trivy reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports-${{ github.sha }}
+          path: reports/
