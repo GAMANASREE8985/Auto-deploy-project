@@ -66,7 +66,7 @@ spec:
             httpGet:
               path: /health
               port: 4000
-            failureThreshold: 30    # allow longer startup (30 * 10s = 300s)
+            failureThreshold: 30     # allow longer startup (30 * 10s = 300s)
             periodSeconds: 10
           readinessProbe:
             httpGet:
