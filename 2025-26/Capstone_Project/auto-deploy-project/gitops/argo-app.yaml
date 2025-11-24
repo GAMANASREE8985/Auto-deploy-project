@@ -1,16 +1,16 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: auto-deploy-app
+  name: auto-deploy
   namespace: argocd
 spec:
   project: default
   source:
-    repoURL: 'https://github.com/YOUR_USER/auto-deploy-project'
-    path: 'k8s'
+    repoURL: 'https://github.com/GAMANASREE8985/Auto-deploy-project.git'
     targetRevision: main
+    path: 2025-26/Capstone_Project/auto-deploy-project/gitops/overlays/prod
   destination:
-    server: 'https://kubernetes.default.svc'
+    server: https://kubernetes.default.svc
     namespace: auto-deploy
   syncPolicy:
     automated:
